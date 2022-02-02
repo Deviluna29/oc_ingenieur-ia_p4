@@ -109,8 +109,8 @@ def drawHistAndBoxPlot(data, columns, dims_fig):
         index += 1
     plt.show()
 
-def analyse_num_with_target_bin(positive_df,negative_df,target_var,remove=["Col_ID"]):
-    num_cols = [col for col in positive_df.columns if not col in positive_df.select_dtypes(["object","category"]).columns.to_list()]
+def analyse_num_with_target_bin(positive_df,negative_df,target_var,columns,remove=["Col_ID"]):
+    num_cols = [col for col in positive_df.columns if (not col in positive_df.select_dtypes(["object","category"]).columns.to_list() and col in columns)]
     if len(remove) > 0:
         num_cols = [col for col in num_cols if (col not in remove)]
 
