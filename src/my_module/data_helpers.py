@@ -5,11 +5,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import gc
-from sklearn import preprocessing, model_selection, linear_model, neighbors, metrics, datasets, impute
+import random
+from sklearn import decomposition, preprocessing, model_selection, linear_model, neighbors, metrics, datasets, impute
 from sklearn.base import ClassifierMixin
-from sklearn.metrics import plot_confusion_matrix, plot_precision_recall_curve, plot_roc_curve, accuracy_score, mean_squared_error, r2_score, confusion_matrix
+from sklearn.metrics import plot_confusion_matrix, plot_precision_recall_curve, plot_roc_curve, accuracy_score, mean_squared_error, r2_score, confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score, average_precision_score
 from hyperopt import fmin, tpe, hp, anneal, Trials, space_eval
 from imblearn.over_sampling import SMOTE
+import plotly.express as px
+from lime.lime_tabular import LimeTabularExplainer
 
 # Affiche la taille du jeu de données
 def displayDataShape(message, data):
@@ -367,7 +370,7 @@ def acpAnalysis(data, target):
     for j in range(p):
         corvar[:,j] = acp.components_[j,:] * sqrt_eigval[j]
 
-    for i in range(0, k, 2):
+    for i in range(0, 2, 2):
         # --------------- projection des individus dans un plan factoriel ---------------
         fig, axes = plt.subplots(1, 2, figsize=(24,12))
         axes[0].set_xlim(projected_data[f'F{i+1}'].min(),projected_data[f'F{i+1}'].max())
@@ -434,7 +437,8 @@ def hyperopt_function(space, classifier, X, y, cv, sm, smote):
 
     return sum(scores)/len(scores)
 
-def find_best_parameters(classifier: ClassifierMixin, space, X, y, X_test, smote=True):
+def find_best_parameters(classifier: ClassifierMixin, space, X, y, X_test, y_test, smote=True):
+    start_training_time = time()
     trials = Trials()
 
     cv = model_selection.KFold(n_splits=5, random_state=42, shuffle=True)
@@ -444,6 +448,8 @@ def find_best_parameters(classifier: ClassifierMixin, space, X, y, X_test, smote
 
     best = space_eval(space, fmin(fn=fmin_function, space=space, algo=tpe.suggest, trials=trials, max_evals=10))
 
+    training_time = time() - start_training_time
+
     classifier.set_params(**best)
 
     if smote:
@@ -452,15 +458,34 @@ def find_best_parameters(classifier: ClassifierMixin, space, X, y, X_test, smote
     else :
         classifier.fit(X, y)
         
-    start_time = time()
+    start_predict_time = time()
     y_pred = classifier.predict(X_test)
-    total_time = time() - start_time
+    predict_time = time() - start_predict_time
+
+    if hasattr(classifier, "predict_proba"):
+        y_pred_proba = classifier.predict_proba(X_test)[:,1]
+    elif hasattr(classifier, "decision_function"):
+        y_pred_proba = classifier.decision_function(X_test)
+    else:
+        y_pred_proba = y_pred
+
+    tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
+
+    personnalised_metric = (0.9*fn + 0.1*fp)/y.size
 
     return {
-        "best": best,
-        "classifier": classifier,
-        "time": total_time,
-        "y_pred": y_pred
+        "Classifier": classifier,
+        "Best params": best,
+        "Predict time": predict_time,
+        "Training time": training_time,
+        "Personnalised metric": personnalised_metric,
+        "Confusion matrix": confusion_matrix(y_test, y_pred),
+        "f1 score": f1_score(y_test, y_pred),
+        "accuracy": accuracy_score(y_test, y_pred),
+        "precision": precision_score(y_test, y_pred),
+        "recall": recall_score(y_test, y_pred),
+        "AUC": roc_auc_score(y_test, y_pred_proba),
+        "Average precision": average_precision_score(y_test, y_pred_proba)
     }
 
 def plot_classifier_results(classifier, X, y):
@@ -472,3 +497,18 @@ def plot_classifier_results(classifier, X, y):
     plot_roc_curve(estimator=classifier, X=X, y=y, ax=ax[2])
 
     plt.show()
+
+def lime(classifier, index, X_train, X_test, y_test):
+
+    explainer = LimeTabularExplainer(
+        X_train.to_numpy(),
+        feature_names=X_train.columns
+        )
+
+    exp = explainer.explain_instance(
+        X_test.iloc[index],
+        classifier.predict_proba
+    )
+
+    print(f"Vraie valeur : {y_test.iloc[index]}")
+    exp.show_in_notebook()
