@@ -5,14 +5,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import gc
-import random
-from sklearn import decomposition, preprocessing, model_selection, linear_model, neighbors, metrics, datasets, impute
+from sklearn import decomposition, preprocessing, model_selection, metrics
 from sklearn.base import ClassifierMixin
-from sklearn.metrics import plot_confusion_matrix, plot_precision_recall_curve, plot_roc_curve, accuracy_score, mean_squared_error, r2_score, confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score, average_precision_score
-from hyperopt import fmin, tpe, hp, anneal, Trials, space_eval
+from hyperopt import fmin, tpe, hp, Trials, space_eval
 from imblearn.over_sampling import SMOTE
-import plotly.express as px
 from lime.lime_tabular import LimeTabularExplainer
+
+######################################## Description des données #######################################
 
 # Affiche la taille du jeu de données
 def displayDataShape(message, data):
@@ -46,8 +45,10 @@ def displayNanPercent(data):
 
     # Return the dataframe with missing information
     return mis_val_table_ren_columns
-# Affiche les diagrammes en camembert des variables qualitatives
 
+######################################## Affichage des graphiques #######################################
+
+# Affiche les diagrammes en camembert des variables qualitatives
 def drawPieplot(data, columns, dims_fig):
     nbr_rows = int(len(columns)/2) + 1
     index = 1
@@ -109,6 +110,7 @@ def drawHistAndBoxPlot(data, columns, dims_fig):
         index += 1
     plt.show()
 
+# Affichage de le répartion des données par classes de la TARGET
 def analyse_num_with_target_bin(positive_df,negative_df,target_var,columns,remove=["Col_ID"]):
     num_cols = [col for col in positive_df.columns if (not col in positive_df.select_dtypes(["object","category"]).columns.to_list() and col in columns)]
     if len(remove) > 0:
@@ -137,6 +139,109 @@ def analyse_num_with_target_bin(positive_df,negative_df,target_var,columns,remov
         axes[2].set_yticks([])
 
         plt.show()
+
+# Détermine les composantes principales
+# Trace les éboulis des valeurs propres
+# Affiche la projection des individus sur les différents plans factoriels
+# Affiche les cercles de corrélations
+def acpAnalysis(data, target):
+    n = data.shape[0]
+    p = data.shape[1]
+
+    # On instancie l'object ACP
+    acp = decomposition.PCA(svd_solver='full')
+    # On récupère les coordonnées factorielles Fik pour chaque individu (projection des individus sur les composantes principales)
+    coord = acp.fit_transform(data)
+
+    # Création d'un Datframe contenant les coordonnées factiorelles, le nom de chaque produit et le nom des colonnes correspondant à chaque composante principale
+    projected_data = pd.DataFrame(
+        data=coord,
+        index=data.index,
+        columns=[ f'F{i}' for i in range(1, p+1) ]
+    )
+    # On rajoute la colonne TARGET
+    projected_data['TARGET'] = target
+
+    # valeur de la variance corrigée
+    eigval = (n-1)/n*acp.explained_variance_
+    eigval_ratio = (n-1)/n*acp.explained_variance_ratio_
+
+    # On affiche l'éboulis des valeurs propres
+    plt.plot(np.arange(1,p+1),eigval,c="red",marker='o')
+    plt.title("Eboulis des valeurs propres")
+    plt.ylabel("Valeur propre")
+    plt.xlabel("Rang de l'axe d'inertie")
+    plt.show()
+
+    plt.bar(np.arange(1, p+1), eigval_ratio*100)
+    plt.plot(np.arange(1, p+1), eigval_ratio.cumsum()*100,c="red",marker='o')
+    plt.xlabel("Rang de l'axe d'inertie")
+    plt.ylabel("Pourcentage d'inertie")
+    plt.title("Eboulis des valeurs propres")
+    plt.show(block=False)
+
+    # On détermine le nombre de composantes à analyser
+    # On ne considère pas comme importants les axes dont l'inertie associée est inférieue à (100/p)%
+    k = np.where(eigval_ratio < 1/p)[0][0]
+
+    if (k % 2) != 0:
+        k -= 1
+
+    print (f"Le nombre de composantes à analyser est de {k}")
+
+    # racine carrée des valeurs propres
+    sqrt_eigval = np.sqrt(eigval)
+
+    # corrélation des variables avec les axes
+    corvar = np.zeros((p,p))
+    for j in range(p):
+        corvar[:,j] = acp.components_[j,:] * sqrt_eigval[j]
+
+    for i in range(0, 2, 2):
+        # --------------- projection des individus dans un plan factoriel ---------------
+        fig, axes = plt.subplots(1, 2, figsize=(24,12))
+        axes[0].set_xlim(projected_data[f'F{i+1}'].min(),projected_data[f'F{i+1}'].max())
+        axes[0].set_ylim(projected_data[f'F{i+2}'].min(),projected_data[f'F{i+2}'].max())
+        sns.scatterplot(
+            ax=axes[0], x=f'F{i+1}',
+            y=f'F{i+2}',
+            data=projected_data,
+            hue="TARGET")
+
+        axes[0].set_xlabel(f'F{i+1}')
+        axes[0].set_ylabel(f'F{i+2}')
+        axes[0].set_title(f"Projection des individus sur 'F{i+1}' et 'F{i+2}'")
+
+        # ajouter les axes
+        axes[0].plot([projected_data[f'F{i+1}'].min(),projected_data[f'F{i+1}'].max()],[0,0],color='silver',linestyle='--',linewidth=3)
+        axes[0].plot([0,0],[projected_data[f'F{i+2}'].min(),projected_data[f'F{i+2}'].max()],color='silver',linestyle='--',linewidth=3)
+
+        # --------------- cercle des corrélations ---------------
+        axes[1].set_xlim(-1,1)
+        axes[1].set_ylim(-1,1)
+
+        # affichage des étiquettes (noms des variables)
+        for j in range(p):
+            axes[1].annotate(data.columns[j],(corvar[j,i],corvar[j,i+1]))
+            axes[1].arrow(0, 0, corvar[j,i], corvar[j,i+1], length_includes_head=True, head_width=0.04)
+
+        # ajouter un cercle
+        cercle = plt.Circle((0,0),1,color='blue',fill=False)
+        axes[1].add_artist(cercle)
+
+        # ajouter les axes
+        axes[1].plot([-1,1],[0,0],color='silver',linestyle='--',linewidth=3)
+        axes[1].plot([0,0],[-1,1],color='silver',linestyle='--',linewidth=3)
+
+        # nom des axes, avec le pourcentage d'inertie expliqué
+        axes[1].set_xlabel('F{} ({}%)'.format(i+1, round(100*acp.explained_variance_ratio_[i],1)))
+        axes[1].set_ylabel('F{} ({}%)'.format(i+2, round(100*acp.explained_variance_ratio_[i+1],1)))
+        axes[1].set_title(f"Cercle des corrélations (F{i+1} et F{i+2})")
+
+        # affichage
+        plt.show()
+
+######################################## Manipulation des données #######################################
 
 # One-hot encoding pour les variables catégorielles
 def one_hot_encoder(df, nan_as_category = True):
@@ -313,108 +418,9 @@ def credit_card_balance(cc):
     gc.collect()
     return cc_agg
 
-# Détermine les composantes principales
-# Trace les éboulis des valeurs propres
-# Affiche la projection des individus sur les différents plans factoriels
-# Affiche les cercles de corrélations
-def acpAnalysis(data, target):
-    n = data.shape[0]
-    p = data.shape[1]
+######################################## Entraînement des modèles de Machine Learning #######################################
 
-    # On instancie l'object ACP
-    acp = decomposition.PCA(svd_solver='full')
-    # On récupère les coordonnées factorielles Fik pour chaque individu (projection des individus sur les composantes principales)
-    coord = acp.fit_transform(data)
-
-    # Création d'un Datframe contenant les coordonnées factiorelles, le nom de chaque produit et le nom des colonnes correspondant à chaque composante principale
-    projected_data = pd.DataFrame(
-        data=coord,
-        index=data.index,
-        columns=[ f'F{i}' for i in range(1, p+1) ]
-    )
-    # On rajoute la colonne TARGET
-    projected_data['TARGET'] = target
-
-    # valeur de la variance corrigée
-    eigval = (n-1)/n*acp.explained_variance_
-    eigval_ratio = (n-1)/n*acp.explained_variance_ratio_
-
-    # On affiche l'éboulis des valeurs propres
-    plt.plot(np.arange(1,p+1),eigval,c="red",marker='o')
-    plt.title("Eboulis des valeurs propres")
-    plt.ylabel("Valeur propre")
-    plt.xlabel("Rang de l'axe d'inertie")
-    plt.show()
-
-    plt.bar(np.arange(1, p+1), eigval_ratio*100)
-    plt.plot(np.arange(1, p+1), eigval_ratio.cumsum()*100,c="red",marker='o')
-    plt.xlabel("Rang de l'axe d'inertie")
-    plt.ylabel("Pourcentage d'inertie")
-    plt.title("Eboulis des valeurs propres")
-    plt.show(block=False)
-
-    # On détermine le nombre de composantes à analyser
-    # On ne considère pas comme importants les axes dont l'inertie associée est inférieue à (100/p)%
-    k = np.where(eigval_ratio < 1/p)[0][0]
-
-    if (k % 2) != 0:
-        k -= 1
-
-    print (f"Le nombre de composantes à analyser est de {k}")
-
-    # racine carrée des valeurs propres
-    sqrt_eigval = np.sqrt(eigval)
-
-    # corrélation des variables avec les axes
-    corvar = np.zeros((p,p))
-    for j in range(p):
-        corvar[:,j] = acp.components_[j,:] * sqrt_eigval[j]
-
-    for i in range(0, 2, 2):
-        # --------------- projection des individus dans un plan factoriel ---------------
-        fig, axes = plt.subplots(1, 2, figsize=(24,12))
-        axes[0].set_xlim(projected_data[f'F{i+1}'].min(),projected_data[f'F{i+1}'].max())
-        axes[0].set_ylim(projected_data[f'F{i+2}'].min(),projected_data[f'F{i+2}'].max())
-        sns.scatterplot(
-            ax=axes[0], x=f'F{i+1}',
-            y=f'F{i+2}',
-            data=projected_data,
-            hue="TARGET")
-
-        axes[0].set_xlabel(f'F{i+1}')
-        axes[0].set_ylabel(f'F{i+2}')
-        axes[0].set_title(f"Projection des individus sur 'F{i+1}' et 'F{i+2}'")
-
-        # ajouter les axes
-        axes[0].plot([projected_data[f'F{i+1}'].min(),projected_data[f'F{i+1}'].max()],[0,0],color='silver',linestyle='--',linewidth=3)
-        axes[0].plot([0,0],[projected_data[f'F{i+2}'].min(),projected_data[f'F{i+2}'].max()],color='silver',linestyle='--',linewidth=3)
-
-        # --------------- cercle des corrélations ---------------
-        axes[1].set_xlim(-1,1)
-        axes[1].set_ylim(-1,1)
-
-        # affichage des étiquettes (noms des variables)
-        for j in range(p):
-            axes[1].annotate(data.columns[j],(corvar[j,i],corvar[j,i+1]))
-            axes[1].arrow(0, 0, corvar[j,i], corvar[j,i+1], length_includes_head=True, head_width=0.04)
-
-        # ajouter un cercle
-        cercle = plt.Circle((0,0),1,color='blue',fill=False)
-        axes[1].add_artist(cercle)
-
-        # ajouter les axes
-        axes[1].plot([-1,1],[0,0],color='silver',linestyle='--',linewidth=3)
-        axes[1].plot([0,0],[-1,1],color='silver',linestyle='--',linewidth=3)
-
-        # nom des axes, avec le pourcentage d'inertie expliqué
-        axes[1].set_xlabel('F{} ({}%)'.format(i+1, round(100*acp.explained_variance_ratio_[i],1)))
-        axes[1].set_ylabel('F{} ({}%)'.format(i+2, round(100*acp.explained_variance_ratio_[i+1],1)))
-        axes[1].set_title(f"Cercle des corrélations (F{i+1} et F{i+2})")
-
-        # affichage
-        plt.show()
-
-
+# Fonction utilisée par hyperopt pour déterminer les meilleurs hyper paramètres
 def hyperopt_function(space, classifier, X, y, cv, sm, smote):
 
     scores = []
@@ -429,14 +435,16 @@ def hyperopt_function(space, classifier, X, y, cv, sm, smote):
         classifier.set_params(**space)
         classifier.fit(X_train_cv, y_train_cv)
 
-        tn, fp, fn, tp = confusion_matrix(y_val_cv, classifier.predict(X_val_cv)).ravel()
+        tn, fp, fn, tp = metrics.confusion_matrix(y_val_cv, classifier.predict(X_val_cv)).ravel()
 
+        # Métrique personnalisée
         score = (0.9*fn + 0.1*fp)/y.size
 
         scores.append(score)
 
     return sum(scores)/len(scores)
 
+# Permet de trouver les meilleurs hyper paramètres pour un modèle par cross validation (SMOTE possible à l'intérieur)
 def find_best_parameters(classifier: ClassifierMixin, space, X, y, X_test, y_test, smote=True):
     start_training_time = time()
     trials = Trials()
@@ -469,7 +477,7 @@ def find_best_parameters(classifier: ClassifierMixin, space, X, y, X_test, y_tes
     else:
         y_pred_proba = y_pred
 
-    tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
+    tn, fp, fn, tp = metrics.confusion_matrix(y_test, y_pred).ravel()
 
     personnalised_metric = (0.9*fn + 0.1*fp)/y.size
 
@@ -479,25 +487,27 @@ def find_best_parameters(classifier: ClassifierMixin, space, X, y, X_test, y_tes
         "Predict time": predict_time,
         "Training time": training_time,
         "Personnalised metric": personnalised_metric,
-        "Confusion matrix": confusion_matrix(y_test, y_pred),
-        "f1 score": f1_score(y_test, y_pred),
-        "accuracy": accuracy_score(y_test, y_pred),
-        "precision": precision_score(y_test, y_pred),
-        "recall": recall_score(y_test, y_pred),
-        "AUC": roc_auc_score(y_test, y_pred_proba),
-        "Average precision": average_precision_score(y_test, y_pred_proba)
+        "Confusion matrix": metrics.confusion_matrix(y_test, y_pred),
+        "f1 score": metrics.f1_score(y_test, y_pred),
+        "accuracy": metrics.accuracy_score(y_test, y_pred),
+        "precision": metrics.precision_score(y_test, y_pred),
+        "recall": metrics.recall_score(y_test, y_pred),
+        "AUC": metrics.roc_auc_score(y_test, y_pred_proba),
+        "Average precision": metrics.average_precision_score(y_test, y_pred_proba)
     }
 
+# Affiche la matrice de confusion, la courbe précision/recall, et la courbe ROC
 def plot_classifier_results(classifier, X, y):
 
     fig, ax = plt.subplots(1,3,figsize=(24,8))
 
-    plot_confusion_matrix(estimator=classifier, X=X, y_true=y, cmap='BuPu_r', ax=ax[0])
-    plot_precision_recall_curve(estimator=classifier, X=X, y=y, ax=ax[1])
-    plot_roc_curve(estimator=classifier, X=X, y=y, ax=ax[2])
+    metrics.plot_confusion_matrix(estimator=classifier, X=X, y_true=y, cmap='BuPu_r', ax=ax[0])
+    metrics.plot_precision_recall_curve(estimator=classifier, X=X, y=y, ax=ax[1])
+    metrics.plot_roc_curve(estimator=classifier, X=X, y=y, ax=ax[2])
 
     plt.show()
 
+# Algorithme LIME
 def lime(classifier, index, X_train, X_test, y_test):
 
     explainer = LimeTabularExplainer(
