@@ -26,3 +26,8 @@ Récupérer les jeux de données <a href = https://s3-eu-west-1.amazonaws.com/st
 
 Dézipper et placer les fichiers csv dans le dossier "data/"
 
+## Utilisation des notebooks
+
+Lancer le 1er notebook "P4_01_analyse_notebook.ipynb" qui sert à l'analyse et à la manipulation des données, celui ci va créer un fichier "merge.csv" à la racine.
+
+Lancer le 2nd notebook "P4_01_model_notebook.ipynb" pour entraîner les modèles de Machine Learning, basé sur les données issues de l'analyse.
